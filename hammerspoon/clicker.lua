@@ -1,43 +1,57 @@
+math.randomseed(os.time())
+
 local M = {}
-M.stopRequested = false
 M.appName = "Recopie de l’iPhone" -- TODO: Auto detect correct app name depending on language ?
 M.lastScript = nil
 M.mouseDown = false
+M.loopTimer = nil
+M.runId = 0
+M.running = false
+M.app = nil
 
-local function getWindow()
-	local app = hs.application.find(M.appName)
-    if not app then
-        hs.alert.show("App not found: " .. M.appName)
-        return nil
-    end
-	local win = app:mainWindow()
-    if not win then
-        hs.alert.show("No window found for " .. M.appName)
-        return nil
-    end
-	return win
+local function randomBetween(min, max)
+    return min + math.random() * (max - min)
 end
 
-local function getTargetWindow()
-    local app = hs.application.find(M.appName)
-    if not app then
-        hs.alert.show("App not found: " .. M.appName)
-        return nil
+local function getApp()
+    if not M.app or not M.app:isRunning() then
+        M.app = hs.application.find(M.appName)
     end
-	app:unhide()
-	app:activate(true)
+    if not M.app then
+        hs.alert.show("App not found: " .. M.appName)
+    end
+    return M.app
+end
+
+local function getWindow()
+    local app = getApp()
+    if not app then return nil end
     local win = app:mainWindow()
     if not win then
         hs.alert.show("No window found for " .. M.appName)
         return nil
     end
-	if win:isMinimized() then
-        win:unminimize()
+    return win
+end
+
+local function getTargetWindow()
+    local app = getApp()
+    if not app then return nil end
+
+    app:unhide()
+    app:activate(true)
+
+    local win = app:mainWindow()
+    if not win then
+        hs.alert.show("No window found for " .. M.appName)
+        return nil
     end
-	win:raise()
+
+    if win:isMinimized() then win:unminimize() end
+    win:raise()
     win:focus()
 
-	local screenFrame = win:screen():frame()
+    local screenFrame = win:screen():frame()
     local f = win:frame()
 
     if f.w > screenFrame.w then f.w = screenFrame.w end
@@ -57,22 +71,24 @@ local function getTargetWindow()
 end
 
 local function toAbsolute(x, y)
-    local win = getTargetWindow()
+    local win = getWindow()
     if not win then return nil end
 
+    if not M.app:isFrontmost() then
+        win = getTargetWindow()
+        if not win then return nil end
+    end
+
     local f = win:frame()
-    local ax = f.x + x
-    local ay = f.y + y
-
-    if ax < f.x or ay < f.y or ax > f.x + f.w or ay > f.y + f.h then return nil end
-
-    return { x = ax, y = ay }
+    if x < 0 or y < 0 or x > f.w or y > f.h then return nil end
+    return { x = f.x + x, y = f.y + y }
 end
 
 -- Mouse functions
 
 function M.MouseDown(x, y)
-	local point = {x=x, y=y}
+    local point = { x = x, y = y }
+	hs.mouse.absolutePosition({x=x, y=y})
 	hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDown, point):post()
 	M.mouseDown = true
 end
@@ -92,7 +108,7 @@ function M.Move(x, y, time)
 		for i=1,steps do
 			local nx = pos.x + (target.x - pos.x) * i / steps
 			local ny = pos.y + (target.y - pos.y) * i / steps
-			hs.mouse.absolutePosition()({x=nx, y=ny})
+			hs.mouse.absolutePosition({x=nx, y=ny})
 			hs.timer.usleep(10000) -- 0.01s per step
 		end
 	else
@@ -114,24 +130,27 @@ function M.start(sequence)
 	local win = getTargetWindow()
 	if not win then return end
 
-	M.stopRequested = false
-	if sequence == nil then
-		sequence = M.lastScript
-	else
-		M.lastScript = sequence
-	end
+    if sequence == nil then
+        sequence = M.lastScript
+    else
+        M.lastScript = sequence
+    end
+	if not sequence then hs.alert.show("No script loaded") return end
 
-	hs.alert.show("Click sequence started.")
+    hs.alert.show("Click sequence started.")
+    M.stop()                    -- coupe un éventuel run précédent
+    M.runId = M.runId + 1
+    local myRun = M.runId
+    M.running = true
 
-	local function loop(index)
-		if M.stopRequested then
-			hs.alert.show("Click sequence stopped.")
-			return
-		end
+    local function loop(index)
+        if myRun ~= M.runId then return end
 
 		local step = sequence[index]
 		if not step then
-			loop(1)
+			M.loopTimer = hs.timer.doAfter(0.1, function()
+				loop(1)
+			end)
 			return
 		end
 
@@ -145,18 +164,26 @@ function M.start(sequence)
 			if relativePoint then M.Move(relativePoint.x, relativePoint.y, step.time) end
 		elseif step.command == "Click" then
 			local relativePoint = toAbsolute(step.x, step.y)
-			if relativePoint then M.Click(relativePoint.x, relativePoint.y, step.time) end
+            if relativePoint then M.Click(relativePoint.x, relativePoint.y, step.time) end
 		end
 
-		local delay = step.delay or 0.1
-		hs.timer.doAfter(delay, function() loop(index + 1) end)
+		local delay = step.delay or 0.0
+		M.loopTimer = hs.timer.doAfter(delay, function() loop(index + 1) end)
 	end
 
 	loop(1)
 end
 
 function M.stop()
-    M.stopRequested = true
+    M.runId = M.runId + 1       -- invalidate any pending callback
+    M.running = false
+    if M.loopTimer then
+        M.loopTimer:stop()
+        M.loopTimer = nil
+    end
+    if M.mouseDown then
+        M.MouseUp()
+    end
 end
 
 M.trackerDrawing = nil
@@ -221,6 +248,5 @@ end
 -- Hotkeys
 hs.hotkey.bind({"cmd","alt","ctrl"}, "S", function() M.start(nil) end)
 hs.hotkey.bind({"cmd","alt","ctrl"}, "C", function() M.stop(nil) end)
-
 hs.hotkey.bind({"cmd","alt","ctrl"}, "P", function() M.toggleMouseTracker() end)
 return M
