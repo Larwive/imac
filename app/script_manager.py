@@ -1,5 +1,5 @@
-from .dsl_interpreter import parse
-from .hammerspoon_bridge import run_steps, stop
+from dsl_interpreter import parse
+from hammerspoon_bridge import run_steps, stop
 
 def start_script_text(script_text: str):
     """

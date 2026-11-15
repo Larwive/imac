@@ -3,7 +3,7 @@ import traceback
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMainWindow, QTextEdit, QPushButton, QVBoxLayout, QWidget, QLabel, QHBoxLayout
 from PySide6.QtCore import Qt, QObject, Signal, Slot, QThread
-from app.script_manager import start_script_text, stop_runner
+from script_manager import start_script_text, stop_runner
 
 import logging
 logging.basicConfig(level=logging.DEBUG, filename="app-debug.log", filemode="a",

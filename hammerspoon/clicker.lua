@@ -134,7 +134,7 @@ end
 
 function M.Click(x, y, duration, done)
     M.MouseDown(x, y)
-    M.loopTimer = hs.timer.doAfter(math.max(duration or 0, 0.01), function() -- each click lasts at least 1 ms
+    M.loopTimer = hs.timer.doAfter(math.max(duration or 0, 0.001), function() -- Each click lasts at least 1 ms.
         M.loopTimer = nil
         M.MouseUp()
         if done then done() end
@@ -210,9 +210,26 @@ function M.stop()
     if M.mouseDown then
         M.MouseUp()
     end
+    hs.alert.show("Click sequence stopped.")
 end
 
-M.trackerDrawing = nil
+M.tracker = nil
+
+local function ensureTracker(f)
+    if not M.tracker then
+        M.tracker = hs.canvas.new({ x = f.x + 20, y = f.y + 20, w = 160, h = 40 })
+        M.tracker:level(hs.canvas.windowLevels.overlay)
+        M.tracker:behavior(hs.canvas.windowBehaviors.canJoinAllSpaces)
+        M.tracker:appendElements(
+            { type = "rectangle", action = "fill", fillColor = { white = 0, alpha = 0.6 },
+              roundedRectRadii = { xRadius = 6, yRadius = 6 } },
+            { type = "text", text = "", textSize = 18, textColor = { white = 1 },
+              frame = { x = 8, y = 6, w = 144, h = 28 } }
+        )
+    end
+    M.tracker:topLeft({ x = f.x + 20, y = f.y + 20 })  -- Follows the window if it moves.
+    return M.tracker
+end
 
 local function showRelativeMousePosition()
     local win = getWindow()
@@ -220,33 +237,16 @@ local function showRelativeMousePosition()
 
     local mouse = hs.mouse.absolutePosition()
     local f = win:frame()
+    local rx, ry = math.floor(mouse.x - f.x), math.floor(mouse.y - f.y)
 
-    local rx = math.floor(mouse.x - f.x)
-    local ry = math.floor(mouse.y - f.y)
-
-    -- Out of window check.
     if rx < 0 or ry < 0 or rx > f.w or ry > f.h then
-        if M.trackerDrawing then
-            M.trackerDrawing:hide()
-        end
+        if M.tracker then M.tracker:hide() end
         return
     end
 
-    local text = "x=" .. rx .. "   y=" .. ry
-
-    if not M.trackerDrawing then
-        M.trackerDrawing = hs.drawing.text(
-            hs.geometry.rect(f.x + 20, f.y + 20, 160, 40),
-            text
-        )
-        M.trackerDrawing:setTextSize(18)
-        M.trackerDrawing:setLevel(hs.drawing.windowLevels.overlay)
-        M.trackerDrawing:setBehavior(hs.drawing.windowBehaviors.canJoinAllSpaces)
-        M.trackerDrawing:show()
-    else
-        M.trackerDrawing:setText(text)
-        M.trackerDrawing:show()
-    end
+    local c = ensureTracker(f)
+    c:elementAttribute(2, "text", "x=" .. rx .. "   y=" .. ry)
+    c:show()
 end
 
 function M.toggleMouseTracker()
@@ -263,9 +263,9 @@ function M.toggleMouseTracker()
             M.trackerTimer = nil
         end
 
-        if M.trackerDrawing then
-            M.trackerDrawing:delete()
-            M.trackerDrawing = nil
+        if M.tracker then
+            M.tracker:delete()
+            M.tracker = nil
         end
     end
 end
@@ -273,6 +273,6 @@ end
 
 -- Hotkeys
 hs.hotkey.bind({"cmd","alt","ctrl"}, "S", function() M.start(nil) end)
-hs.hotkey.bind({"cmd","alt","ctrl"}, "C", function() M.stop() end)
+hs.hotkey.bind({"cmd","alt","ctrl"}, "X", function() M.stop() end)
 hs.hotkey.bind({"cmd","alt","ctrl"}, "P", function() M.toggleMouseTracker() end)
 return M
