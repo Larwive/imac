@@ -1,6 +1,5 @@
-from typing import List, Dict
 
-def parse(script: str) -> List[Dict]:
+def parse(script: str) -> list[dict]:
     """
     Temporary simple DSL parser.
     TODO: Use regex. Declare total number of repeats.
