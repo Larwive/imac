@@ -9,6 +9,8 @@ M.runId = 0
 M.running = false
 M.app = nil
 
+function M.isRunning() return M.running end
+
 local function randomBetween(min, max)
     return min + math.random() * (max - min)
 end
@@ -94,34 +96,49 @@ function M.MouseDown(x, y)
 end
 
 function M.MouseUp()
-	local pos = hs.mouse.getAbsolutePosition()
+	local pos = hs.mouse.absolutePosition()
 	hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseUp, pos):post()
 	M.mouseDown = false
 end
 
-function M.Move(x, y, time)
-	local pos = hs.mouse.getAbsolutePosition()
-	local target = {x=x, y=y}
-	time = time or 0
-	if time > 0 then
-		local steps = math.ceil(time / 0.01)
-		for i=1,steps do
-			local nx = pos.x + (target.x - pos.x) * i / steps
-			local ny = pos.y + (target.y - pos.y) * i / steps
-			hs.mouse.absolutePosition({x=nx, y=ny})
-			hs.timer.usleep(10000) -- 0.01s per step
-		end
-	else
-		hs.mouse.absolutePosition(target)
-	end
+function M.Move(x, y, duration, done)
+    local from = hs.mouse.absolutePosition()
+    duration = duration or 0
+
+    local function setPos(p)
+        hs.mouse.absolutePosition(p)
+        if M.mouseDown then
+            hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDragged, p):post()
+        end
+    end
+
+    if duration <= 0 then
+        setPos({ x = x, y = y })
+        if done then done() end
+        return
+    end
+
+    local t0 = hs.timer.secondsSinceEpoch()
+    M.loopTimer = hs.timer.doEvery(0.01, function()
+        local k = (hs.timer.secondsSinceEpoch() - t0) / duration
+        if k >= 1 then
+            M.loopTimer:stop()
+            M.loopTimer = nil
+            setPos({ x = x, y = y })
+            if done then done() end
+        else
+            setPos({ x = from.x + (x - from.x) * k, y = from.y + (y - from.y) * k })
+        end
+    end)
 end
 
-function M.Click(x, y, time)
-	M.MouseDown(x, y)
-	if time and time > 0 then
-		hs.timer.usleep(time * 1e6)
-	end
-	M.MouseUp()
+function M.Click(x, y, duration, done)
+    M.MouseDown(x, y)
+    M.loopTimer = hs.timer.doAfter(math.max(duration or 0, 0.01), function() -- each click lasts at least 1 ms
+        M.loopTimer = nil
+        M.MouseUp()
+        if done then done() end
+    end)
 end
 
 -- Click sequence runner
@@ -146,30 +163,39 @@ function M.start(sequence)
     local function loop(index)
         if myRun ~= M.runId then return end
 
-		local step = sequence[index]
-		if not step then
-			M.loopTimer = hs.timer.doAfter(0.1, function()
-				loop(1)
-			end)
-			return
-		end
+        local step = sequence[index]
+        if not step then
+            M.loopTimer = hs.timer.doAfter(0.1, function() loop(1) end)
+            return
+        end
 
-		if step.command == "MouseDown" then
-			local relativePoint = toAbsolute(step.x, step.y)
-			if relativePoint then M.MouseDown(relativePoint.x, relativePoint.y) end
-		elseif step.command == "MouseUp" then
-			M.MouseUp()
-		elseif step.command == "Move" then
-			local relativePoint = toAbsolute(step.x, step.y)
-			if relativePoint then M.Move(relativePoint.x, relativePoint.y, step.time) end
-		elseif step.command == "Click" then
-			local relativePoint = toAbsolute(step.x, step.y)
-            if relativePoint then M.Click(relativePoint.x, relativePoint.y, step.time) end
-		end
+        -- Appelé quand le geste est fini.
+        local function advance()
+            if myRun ~= M.runId then return end
+            M.loopTimer = hs.timer.doAfter(step.delay or 0, function() loop(index + 1) end)
+        end
 
-		local delay = step.delay or 0.0
-		M.loopTimer = hs.timer.doAfter(delay, function() loop(index + 1) end)
-	end
+        local cmd = step.command
+        if cmd == "MouseUp" then
+            M.MouseUp()
+            advance()
+        elseif cmd == "Click" or cmd == "Move" or cmd == "MouseDown" then
+            local p = toAbsolute(step.x, step.y)
+            if not p then
+                if not getApp() then M.stop() return end 
+                advance()
+            elseif cmd == "Click" then
+                M.Click(p.x, p.y, step.time, advance)
+            elseif cmd == "Move" then
+                M.Move(p.x, p.y, step.time, advance)
+            else
+                M.MouseDown(p.x, p.y)
+                advance()
+            end
+        else
+            advance()
+        end
+    end
 
 	loop(1)
 end
@@ -247,6 +273,6 @@ end
 
 -- Hotkeys
 hs.hotkey.bind({"cmd","alt","ctrl"}, "S", function() M.start(nil) end)
-hs.hotkey.bind({"cmd","alt","ctrl"}, "C", function() M.stop(nil) end)
+hs.hotkey.bind({"cmd","alt","ctrl"}, "C", function() M.stop() end)
 hs.hotkey.bind({"cmd","alt","ctrl"}, "P", function() M.toggleMouseTracker() end)
 return M
