@@ -159,24 +159,43 @@ function M.start(sequence)
     M.runId = M.runId + 1
     local myRun = M.runId
     M.running = true
+    local stack = {}
 
     local function loop(index)
         if myRun ~= M.runId then return end
 
         local step = sequence[index]
         if not step then
-            M.loopTimer = hs.timer.doAfter(0.1, function() loop(1) end)
+            M.running = false
+            hs.alert.show("Click sequence finished.")
             return
         end
 
         -- Appelé quand le geste est fini.
-        local function advance()
+        local function advance(nextIndex)
             if myRun ~= M.runId then return end
-            M.loopTimer = hs.timer.doAfter(step.delay or 0, function() loop(index + 1) end)
+            M.loopTimer = hs.timer.doAfter(step.delay or 0, function() loop(nextIndex or index + 1) end)
         end
 
         local cmd = step.command
-        if cmd == "MouseUp" then
+
+        if cmd == "Repeat" then
+            table.insert(stack, { start = index, remaining = step.count })
+            advance()
+        elseif cmd == "End" then
+            local top = stack[#stack]
+            if top.remaining == 0 then
+                advance(top.start + 1)
+            else
+                top.remaining = top.remaining - 1
+                if top.remaining > 0 then
+                    advance(top.start + 1)
+                else
+                    table.remove(stack)
+                    advance()
+                end
+            end
+        elseif cmd == "MouseUp" then
             M.MouseUp()
             advance()
         elseif cmd == "Click" or cmd == "Move" or cmd == "MouseDown" then
